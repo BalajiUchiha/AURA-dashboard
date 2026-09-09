@@ -34,8 +34,10 @@ OPENCHARGEMAP_API_KEY = os.environ["OPENCHARGEMAP_API_KEY"]
 GROQ_API_KEY        = os.environ["GROQ_API_KEY"]
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")  # optional legacy
 
-# Polling interval (seconds)
-POLL_INTERVAL_S     = int(os.getenv("POLL_INTERVAL_S", "5"))
+# Polling and table insertion intervals (seconds)
+POLL_INTERVAL_S           = float(os.getenv("POLL_INTERVAL_S", "2.5"))
+LIVE_INSERT_INTERVAL_S    = float(os.getenv("LIVE_INSERT_INTERVAL_S", "2.5"))
+HISTORY_INSERT_INTERVAL_S = float(os.getenv("HISTORY_INSERT_INTERVAL_S", "5.0"))
 
 # Number of recent rows to fetch for trend analysis
 HISTORY_WINDOW      = int(os.getenv("HISTORY_WINDOW", "10"))
@@ -45,7 +47,12 @@ FIXED_LAT           = float(os.getenv("FIXED_LAT", "13.0827"))
 FIXED_LON           = float(os.getenv("FIXED_LON", "80.2707"))
 
 # Total pack battery energy capacity (Wh) for percentage calculation
-BATTERY_ENERGY_WH   = float(os.getenv("BATTERY_ENERGY_WH", "18.5"))
+BATTERY_ENERGY_WH   = float(os.getenv("BATTERY_ENERGY_WH", "25.0"))
+
+# Battery Pack Voltage Parameters (Default 10.6V pack capacity baseline: 10.6V full, 8.4V empty, 9.0V low cutoff)
+PACK_V_FULL         = float(os.getenv("PACK_V_FULL", "10.6"))
+PACK_V_EMPTY        = float(os.getenv("PACK_V_EMPTY", "8.4"))
+LOW_VOLTAGE_CUTOFF  = float(os.getenv("LOW_VOLTAGE_CUTOFF", "9.0"))
 
 # Adjusted range below this triggers alert warning
 LOW_RANGE_THRESHOLD_KM = float(os.getenv("LOW_RANGE_THRESHOLD_KM", "2.0"))
@@ -73,5 +80,5 @@ MQTT_TOPIC          = os.getenv("MQTT_TOPIC", "aura/vehicle/data")
 
 # ── ElevenLabs TTS (optional — /tts endpoint returns 503 if missing) ──
 ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "pMsXgVXv3BLzUgSXRplE")  # default: "Aria"
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")  # default: "George" (British Male)
 

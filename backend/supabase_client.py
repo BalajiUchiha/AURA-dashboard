@@ -51,29 +51,85 @@ def _generate_synthetic_history(n: int) -> list[dict]:
 _last_fetch_success: bool = False
 
 
+def fetch_live_telemetry() -> dict | None:
+    """Fetch the latest active telemetry record dynamically from live_data table."""
+    if _client is not None:
+        try:
+            res = (
+                _client.table("live_data")
+                .select("*")
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+        except Exception as e:
+            pass
+
+        try:
+            res = (
+                _client.table("live_data")
+                .select("*")
+                .order("id", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+        except Exception as e:
+            print(f"  ⚠️  Supabase live_data fetch warning: {e}")
+    return None
+
+
 def fetch_recent_history(n: int = cfg.HISTORY_WINDOW) -> list[dict]:
     """
     Fetch the most recent `n` rows from history_data, returned oldest-first.
+    Appends or integrates the active live_data record if newer/available.
     Falls back to synthetic telemetry if Supabase is unreachable or empty.
     """
     global _last_fetch_success
+    rows = []
     if _client is not None:
         try:
             response = (
                 _client.table("history_data")
                 .select("*")
-                .order("id", desc=True)
+                .order("created_at", desc=True)
                 .limit(n)
                 .execute()
             )
             rows = response.data or []
+            if not rows:
+                response = (
+                    _client.table("history_data")
+                    .select("*")
+                    .order("id", desc=True)
+                    .limit(n)
+                    .execute()
+                )
+                rows = response.data or []
             if rows:
                 _last_fetch_success = True
                 rows.reverse()  # oldest-first
-                return rows
         except Exception as e:
             _last_fetch_success = False
             print(f"  ⚠️  Supabase fetch warning: {e} — using simulation data.")
+
+    live = fetch_live_telemetry()
+    if live:
+        if not rows:
+            rows = [live] * max(2, n)
+            _last_fetch_success = True
+        else:
+            live_ts = live.get("updated_at") or live.get("created_at")
+            last_hist_ts = rows[-1].get("created_at") or rows[-1].get("updated_at")
+            if not last_hist_ts or (live_ts and live_ts >= last_hist_ts):
+                rows[-1] = live
+                _last_fetch_success = True
+
+    if rows:
+        return rows
 
     _last_fetch_success = False
     return _generate_synthetic_history(n)
@@ -174,18 +230,25 @@ def fetch_recent_alerts(limit: int = 100) -> list[dict]:
 
 def update_live_data(telemetry: dict) -> dict | None:
     """
-    UPSERT live_data WHERE id=1
-    Overwrites/upserts the single live telemetry record (same as Node-RED live path).
+    UPDATE / UPSERT live_data WHERE id=1
+    Overwrites/updates the single live telemetry record in real-time.
     """
     if _client is not None:
         try:
             payload = {k: v for k, v in telemetry.items() if v is not None and k != "created_at"}
             payload["id"] = 1
             payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-            res = _client.table("live_data").upsert(payload).execute()
-            return res.data[0] if res.data else {"id": 1}
+            
+            # Perform explicit update on row id=1
+            res = _client.table("live_data").update(payload).eq("id", 1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]
+            
+            # Fallback to upsert with explicit on_conflict="id" if row id=1 doesn't exist yet
+            res_upsert = _client.table("live_data").upsert(payload, on_conflict="id").execute()
+            return res_upsert.data[0] if res_upsert.data else {"id": 1}
         except Exception as e:
-            print(f"  ⚠️  Supabase live_data upsert warning: {e}")
+            print(f"  ⚠️  Supabase live_data update warning: {e}")
             import traceback
             traceback.print_exc()
             return None

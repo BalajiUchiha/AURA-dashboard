@@ -18,10 +18,12 @@ if the actual cell chemistry/count differs.
 
 import numpy as np
 
-# ---- Pack constants (Weak pack: ~7.6V nominal, 8.4V full, 5.5V cutoff, 2.2Ah) ----
-PACK_V_FULL = 8.4       # 2 * 4.2V fully charged
-PACK_V_EMPTY = 5.5      # cutoff voltage
-PACK_V_RANGE = PACK_V_FULL - PACK_V_EMPTY   # 2.9V usable window
+import config as cfg
+
+# ---- Pack constants (Configured via config.py) ----
+PACK_V_FULL = getattr(cfg, "PACK_V_FULL", 10.6)
+PACK_V_EMPTY = getattr(cfg, "PACK_V_EMPTY", 8.4)
+PACK_V_RANGE = max(0.5, PACK_V_FULL - PACK_V_EMPTY)
 PACK_CAPACITY_AH = 2.2
 
 EPS = 1e-6

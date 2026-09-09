@@ -17,7 +17,7 @@ function normalizeFrame(raw: any): AuraTelemetry | null {
   const veh = raw.vehicle || {};
   const pred = raw.prediction || {};
   const volt = raw.voltage ?? veh.voltage ?? raw.filtered?.voltage ?? 0;
-  const bat = raw.capacity_remaining_percent ?? raw.battery_pct ?? (volt > 0 ? Math.min(100, Math.max(0, Math.round((volt / 8.4) * 100))) : 80);
+  const bat = raw.capacity_remaining_percent ?? raw.battery_pct ?? (volt > 0 ? Math.min(100, Math.max(0, Math.round((volt / 10.6) * 100))) : 80);
 
   return {
     ...raw,

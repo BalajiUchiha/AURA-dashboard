@@ -39,6 +39,7 @@ def reset_jarvis_state() -> None:
 # ── System instructions ──────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are JARVIS, an AI co-pilot for an electric vehicle prototype. "
+    "The vehicle operates on a 10.6V battery pack capacity baseline (supporting up to 11.0V max capacity threshold). "
     "Explain technical issues, battery health, and estimated runtime to the driver in simple, calm, confident language. "
     "Be concise — 2-3 sentences max. Focus on vehicle status, capacity remaining, estimated runtime, and driver guidance. "
     "Do not mention or suggest any charging station."
@@ -55,7 +56,8 @@ def _build_user_prompt(
     station_info: dict | None = None,
 ) -> str:
     """Build a structured user prompt from all available context."""
-    lines = ["── Current Vehicle Status (EKF-filtered) ──"]
+    v_full = getattr(cfg, "PACK_V_FULL", 10.6)
+    lines = [f"── Current Vehicle Status (EKF-filtered, Pack Spec: {v_full}V baseline / 11V max) ──"]
 
     for key, label, unit in [
         ("speed", "Speed", "km/h"),
@@ -185,7 +187,7 @@ def get_jarvis_message(
     alert_info: dict,
     degradation_info: dict | None = None,
     station_info: dict | None = None,
-    verbose_log: bool = True,
+    verbose_log: bool = False,
     force_call: bool = False,
 ) -> str:
     """

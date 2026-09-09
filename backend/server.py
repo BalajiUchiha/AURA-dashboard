@@ -130,7 +130,7 @@ def _execute_pipeline_cycle():
     if not readings or len(readings) < 2:
         return None
 
-    newest_at = readings[-1].get("created_at")
+    newest_at = readings[-1].get("updated_at") or readings[-1].get("created_at")
     if newest_at and newest_at == _last_seen_at and _latest_cache is not None:
         # No new data, return cached result
         return _latest_cache
@@ -217,27 +217,59 @@ def _execute_pipeline_cycle():
     except Exception as e:
         print(f"  💾 Insight write failed: {e}")
 
-    # Build cache payload with reframed display metrics (Capacity % and Runtime s)
+    # Build cache payload with calibrated display metrics (Capacity %, Runtime s, Range km)
     now_iso = datetime.now(timezone.utc).isoformat()
     volt = float(latest.get("voltage", 0))
     rem_wh = float(latest.get("remaining_wh", 0))
     pow_w = float(latest.get("power_w", 0))
 
-    bat_pct = round(min(100.0, max(0.0, (volt / 8.4) * 100.0)), 1) if volt > 0 else 80.0
-    cap_pct = round(min(100.0, max(0.0, (rem_wh / cfg.BATTERY_ENERGY_WH) * 100.0)), 1) if rem_wh > 0 else bat_pct
-    runtime_s = round((rem_wh / pow_w) * 3600.0, 1) if pow_w > 0 and rem_wh > 0 else 0.0
+    v_full = getattr(cfg, "PACK_V_FULL", 10.6)
+    v_empty = getattr(cfg, "PACK_V_EMPTY", 8.4)
+    tot_wh = getattr(cfg, "BATTERY_ENERGY_WH", 25.0)
+
+    # Battery percentage derived from configured voltage window
+    if volt > 0:
+        bat_pct = round(min(100.0, max(0.0, ((volt - v_empty) / max(0.1, v_full - v_empty)) * 100.0)), 1)
+    else:
+        bat_pct = 80.0
+
+    # Capacity percentage aligned with voltage percentage
+    cap_pct = bat_pct
+
+    # Calibrate usable effective remaining Wh with cap_pct
+    effective_rem_wh = (cap_pct / 100.0) * tot_wh if cap_pct > 0 else 0.0
+
+    # Runtime calculation based on effective_rem_wh (guarantees 0.0s when cap_pct == 0.0%)
+    if cap_pct <= 0 or effective_rem_wh <= 0:
+        runtime_s = 0.0
+    elif pow_w >= 0.5:
+        raw_runtime_s = (effective_rem_wh / pow_w) * 3600.0
+        runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)  # max 4 hours under load
+    else:
+        runtime_s = round(min(14400.0, (effective_rem_wh / 15.0) * 3600.0), 1)  # nominal ~15W idle load
+
+    # Calibrate range (km) using effective_rem_wh
+    raw_range = float(latest.get("range_km", 0))
+    if raw_range > 10.0 or raw_range <= 0:
+        epk = float(latest.get("energy_per_km", 20.0))
+        if epk < 15.0 or epk > 100.0:
+            epk = 20.0
+        calc_range = round(effective_rem_wh / epk, 2) if effective_rem_wh > 0 else 0.0
+    else:
+        calc_range = raw_range
 
     latest["capacity_remaining_percent"] = cap_pct
     latest["estimated_runtime_seconds"] = runtime_s
+    latest["remaining_wh"] = effective_rem_wh
 
     cache_payload = {
         "timestamp": now_iso,
         "speed": float(latest.get("speed", 0)),
         "voltage": volt,
         "current_a": float(latest.get("current_a", 0)),
-        "range_km": float(latest.get("range_km", 0)),
-        "adjusted_range_km": adjusted_range if adjusted_range is not None else float(latest.get("range_km", 0)),
-        "baseline_range_km": degradation_info.get("baseline_range_km") if degradation_info else float(latest.get("range_km", 0)),
+        "range_km": calc_range,
+        "adjusted_range_km": round(calc_range * (1.0 - (degradation_info["degradation_percent"] / 100.0 if degradation_info else 0.0)), 2),
+        "baseline_range_km": calc_range,
         "battery_pct": bat_pct,
         "capacity_remaining_percent": cap_pct,
         "estimated_runtime_seconds": runtime_s,
@@ -255,7 +287,7 @@ def _execute_pipeline_cycle():
             "energy_wh": float(latest.get("energy_wh", 0)),
             "energy_per_km": float(latest.get("energy_per_km", 0)),
             "remaining_wh": rem_wh,
-            "range_km": float(latest.get("range_km", 0)),
+            "range_km": calc_range,
             "capacity_remaining_percent": cap_pct,
             "estimated_runtime_seconds": runtime_s,
             "gradient": float(latest.get("gradient", 0)),
@@ -640,7 +672,7 @@ async def text_to_speech(req: TTSRequest):
     }
     body = {
         "text": req.text,
-        "model_id": "eleven_monolingual_v1",
+        "model_id": "eleven_turbo_v2_5",
         "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
     }
 
@@ -650,6 +682,7 @@ async def text_to_speech(req: TTSRequest):
 
         if resp.status_code != 200:
             err_detail = resp.text[:200] if resp.text else f"ElevenLabs API error HTTP {resp.status_code}"
+            print(f"  ⚠️  [TTS] ElevenLabs API error HTTP {resp.status_code}: {err_detail}")
             return {
                 "audio_base64": None,
                 "alignment": None,

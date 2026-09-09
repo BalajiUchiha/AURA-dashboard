@@ -139,6 +139,12 @@ def _run_cycle():
         latest_range = latest.get("range_km")
         if latest_range is not None:
             latest_range = float(latest_range)
+            if latest_range > 10.0 or latest_range <= 0:
+                rem_w = float(latest.get("remaining_wh", 0))
+                epk = float(latest.get("energy_per_km", 20.0))
+                if epk < 15.0 or epk > 100.0:
+                    epk = 20.0
+                latest_range = round(rem_w / epk, 2) if rem_w > 0 else 0.0
 
         degradation_info = predict_degradation(
             voltage_series=ekf_result["smoothed_voltages"],
@@ -159,14 +165,27 @@ def _run_cycle():
         print(f"  🧠 ML prediction failed: {e}")
 
     # ── Calculate reframed range metrics (Capacity % and Runtime s) ───
-    rem_wh = float(latest.get("remaining_wh", 0))
     pow_w = float(latest.get("power_w", 0))
     volt = float(fv)
-    cap_pct = round(min(100.0, max(0.0, (rem_wh / cfg.BATTERY_ENERGY_WH) * 100.0)), 1) if rem_wh > 0 else (round(min(100.0, max(0.0, (volt / 8.4) * 100.0)), 1) if volt > 0 else 80.0)
-    runtime_s = round((rem_wh / pow_w) * 3600.0, 1) if pow_w > 0 and rem_wh > 0 else 0.0
+    v_full = getattr(cfg, "PACK_V_FULL", 10.6)
+    v_empty = getattr(cfg, "PACK_V_EMPTY", 8.4)
+    tot_wh = getattr(cfg, "BATTERY_ENERGY_WH", 25.0)
+
+    bat_pct = round(min(100.0, max(0.0, ((volt - v_empty) / max(0.1, v_full - v_empty)) * 100.0)), 1) if volt > 0 else 80.0
+    cap_pct = bat_pct
+    effective_rem_wh = (cap_pct / 100.0) * tot_wh if cap_pct > 0 else 0.0
+
+    if cap_pct <= 0 or effective_rem_wh <= 0:
+        runtime_s = 0.0
+    elif pow_w >= 0.5:
+        raw_runtime_s = (effective_rem_wh / pow_w) * 3600.0
+        runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)
+    else:
+        runtime_s = round(min(14400.0, (effective_rem_wh / 15.0) * 3600.0), 1)
 
     latest["capacity_remaining_percent"] = cap_pct
     latest["estimated_runtime_seconds"] = runtime_s
+    latest["remaining_wh"] = effective_rem_wh
 
     # ── Step 5: Charging station lookup (Disabled for prototype) ───────
     station_info = None

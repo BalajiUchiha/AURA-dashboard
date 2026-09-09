@@ -20,14 +20,40 @@ export function useJarvisSpeech(message: string | null | undefined) {
   const [complete, setComplete] = useState(false);
   const [voice, setVoice] = useState<"idle" | "audio" | "text-only">("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastSpokenMessageRef = useRef<string>("");
+
+  // Global user gesture unlock for browser audio / speech synthesis
+  useEffect(() => {
+    const unlock = () => {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        try {
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   useEffect(() => {
     if (!message) {
+      lastSpokenMessageRef.current = "";
       setTyped("");
       setComplete(false);
       setSpeaking(false);
       return;
     }
+
+    if (message === lastSpokenMessageRef.current) {
+      return;
+    }
+    lastSpokenMessageRef.current = message;
 
     let cancelled = false;
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -45,9 +71,10 @@ export function useJarvisSpeech(message: string | null | undefined) {
       setSpeaking(false);
     };
 
-    /** Fallback: constant-rate reveal. */
+    /** Fallback / immediate typewriter reveal. */
     const type = (msPerChar: number) => {
       if (cancelled) return;
+      if (timer) clearInterval(timer);
       let i = 0;
       timer = setInterval(() => {
         i += 1;
@@ -60,22 +87,19 @@ export function useJarvisSpeech(message: string | null | undefined) {
       }, Math.max(8, msPerChar));
     };
 
+    // Immediately start character reveal so panel never freezes blank while fetching /tts audio
+    type(30);
+
     /** Alignment-driven reveal, clocked off the audio element itself. */
     const typeWithAlignment = (audio: HTMLAudioElement, alignment: TtsAlignment) => {
       const starts = alignment.character_start_times_seconds;
       const chars = alignment.characters ?? [];
-      // ElevenLabs may normalize text (numbers, abbreviations), so the aligned
-      // string can differ in length from the displayed message. When it matches
-      // we index 1:1; otherwise we scale the aligned index onto the message.
       const exact = chars.join("") === message;
       const scale = starts.length > 0 ? message.length / starts.length : 1;
 
       const tick = () => {
         if (cancelled) return;
         const t = audio.currentTime;
-        // Advance while the next character's start time has already passed.
-        let i = 0;
-        // starts is ascending; binary search keeps this cheap on long messages.
         let lo = 0;
         let hi = starts.length;
         while (lo < hi) {
@@ -83,7 +107,7 @@ export function useJarvisSpeech(message: string | null | undefined) {
           if ((starts[mid] ?? 0) <= t) lo = mid + 1;
           else hi = mid;
         }
-        i = lo;
+        const i = lo;
 
         const shown = exact ? i : Math.round(i * scale);
         setTyped(message.slice(0, Math.min(shown, message.length)));
@@ -125,12 +149,15 @@ export function useJarvisSpeech(message: string | null | undefined) {
           playPromise.catch(() => {
             if (!cancelled) {
               setVoice("text-only");
-              type(30);
             }
           });
         }
 
         if (alignment && alignment.character_start_times_seconds.length > 0) {
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
           typeWithAlignment(audio, alignment);
           return;
         }
@@ -143,14 +170,22 @@ export function useJarvisSpeech(message: string | null | undefined) {
         if (typeof window !== "undefined" && "speechSynthesis" in window) {
           try {
             window.speechSynthesis.cancel();
+            window.speechSynthesis.resume();
             const utt = new SpeechSynthesisUtterance(message);
             utt.rate = 1.05;
+            utt.onboundary = (event) => {
+              if (cancelled) return;
+              const idx = event.charIndex + (event.charLength || 1);
+              setTyped(message.slice(0, idx));
+            };
+            utt.onend = () => {
+              if (!cancelled) finish();
+            };
             window.speechSynthesis.speak(utt);
           } catch {
             // ignore speech synthesis failures
           }
         }
-        type(30);
       }
     };
 

@@ -17,12 +17,14 @@ Export:
                    filtered_speed, speed_rate) → dict
 """
 
-# ── Thresholds (Recalibrated for weak ~7.6V pack: 8.4V max, 5.5V cutoff) ──
+import config as cfg
+
+# ── Thresholds (Configurable via config.py) ──
 VOLTAGE_RATE_THRESHOLD   = -0.035  # V/s  — voltage falling faster than this
 CURRENT_RATE_THRESHOLD   =  0.05   # A/s  — current rising faster than this
 HIGH_CURRENT_RATE        =  0.08   # A/s  — current rise for unusual power draw
 SPEED_RATE_THRESHOLD     =  0.2    # km/h/s — speed change considered "flat"
-LOW_VOLTAGE_CUTOFF       =  6.5    # V    — absolute low battery threshold (~85.5% of 7.6V)
+LOW_VOLTAGE_CUTOFF       =  getattr(cfg, "LOW_VOLTAGE_CUTOFF", 9.0)  # V — low battery cutoff threshold
 
 
 def analyze_alerts(

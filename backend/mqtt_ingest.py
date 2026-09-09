@@ -31,13 +31,15 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.DEBUG)
 
-# ── Throttle: only insert history every N seconds ─────────────────────
-HISTORY_INSERT_INTERVAL_S = int(os.environ.get("HISTORY_INSERT_INTERVAL_S", "5"))
+# ── Throttle: live_data and history_data intervals (seconds) ─────────
+LIVE_INSERT_INTERVAL_S = float(getattr(cfg, "LIVE_INSERT_INTERVAL_S", 2.5))
+HISTORY_INSERT_INTERVAL_S = float(getattr(cfg, "HISTORY_INSERT_INTERVAL_S", 5.0))
 
 # ── Global State ──────────────────────────────────────────────────────
 _client: Optional[mqtt.Client] = None
 _is_connected: bool = False
 _last_message_timestamp: Optional[str] = None
+_last_live_insert_time: float = 0.0
 _last_history_insert_time: float = 0.0
 
 
@@ -81,7 +83,7 @@ def _on_disconnect(client, userdata, *args, **kwargs):
 
 def _on_message(client, userdata, msg):
     """Callback when a telemetry payload is published to the subscribed topic."""
-    global _last_message_timestamp
+    global _last_message_timestamp, _last_live_insert_time, _last_history_insert_time
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -97,6 +99,8 @@ def _on_message(client, userdata, msg):
         pwr_val = float(data.get("power_w") if data.get("power_w") is not None else data.get("power", 0.0))
         eng_val = float(data.get("energy_wh") if data.get("energy_wh") is not None else data.get("energy", 0.0))
         epk_val = float(data.get("energy_per_km") if data.get("energy_per_km") is not None else data.get("energy_km", 0.0))
+        if epk_val < 15.0 or epk_val > 100.0:
+            epk_val = 20.0
         rem_val = float(data.get("remaining_wh") if data.get("remaining_wh") is not None else data.get("remaining", 0.0))
         rng_val = float(data.get("range_km") if data.get("range_km") is not None else data.get("range", 0.0))
         grad_val = float(data.get("gradient", 0.0))
@@ -118,11 +122,15 @@ def _on_message(client, userdata, msg):
             "created_at": now_iso,
         }
 
-        # Always update live_data (fast upsert, keeps dashboard responsive)
-        live_res = supabase_client.update_live_data(telemetry)
+        # Throttle live_data updates to 2.5s interval
+        now_mono = time.monotonic()
+        live_res = None
+        if now_mono - _last_live_insert_time >= LIVE_INSERT_INTERVAL_S:
+            live_res = supabase_client.update_live_data(telemetry)
+            if live_res is not None:
+                _last_live_insert_time = now_mono
 
         # Throttle history_data inserts to avoid DB flooding
-        now_mono = time.monotonic()
         elapsed = now_mono - _last_history_insert_time
         hist_res = None
         if elapsed >= HISTORY_INSERT_INTERVAL_S:
@@ -141,7 +149,7 @@ def _on_message(client, userdata, msg):
             )
         elif live_res is not None:
             _last_message_timestamp = now_iso
-            logger.debug(f"✅ [MQTT->DB] Updated live_data (id=1), history skipped ({elapsed:.1f}s < {HISTORY_INSERT_INTERVAL_S}s)")
+            logger.info(f"✅ [MQTT->DB] Updated live_data (id=1) | V: {telemetry['voltage']}V, I: {telemetry['current_a']}A, Spd: {telemetry['speed']} km/h")
         else:
             logger.warning(f"⚠️ [MQTT->DB FAILED] Failed DB writes for payload at {now_iso}")
 

@@ -39,8 +39,7 @@ def _load_model():
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # suppress sklearn version warning
             _model = joblib.load(cfg.MODEL_PKL_PATH)
-        print(f"  🧠 Model loaded: {type(_model).__name__} "
-              f"({_model.n_estimators} trees, {_model.n_features_in_} features)")
+            pass
     except Exception as e:
         print(f"❌ Failed to load model: {e}")
         return False
@@ -51,12 +50,8 @@ def _load_model():
             with open(cfg.MODEL_METADATA_PATH, "r") as f:
                 _metadata = json.load(f)
             _feature_importances = _metadata.get("feature_importances", {})
-            print(f"  📋 Metadata loaded: MAE={_metadata.get('test_mae_percentage_points')}%, "
-                  f"R²={_metadata.get('test_r2')}")
         except Exception as e:
-            print(f"  ⚠️  Metadata load failed (non-fatal): {e}")
-    else:
-        print(f"  ⚠️  Metadata file not found: {cfg.MODEL_METADATA_PATH}")
+            pass
 
     return True
 

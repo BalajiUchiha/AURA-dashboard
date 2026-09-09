@@ -27,7 +27,7 @@ export function Dashboard() {
   const { typed, speaking, complete, voice } = useJarvisSpeech(frame?.jarvis_message ?? null);
   const status = LINK_LABEL[link] ?? LINK_LABEL["booting"]!;
 
-  const runtimeMinutes = frame?.estimated_runtime_seconds 
+  const runtimeMinutes = typeof frame?.estimated_runtime_seconds === "number"
     ? Math.round(frame.estimated_runtime_seconds / 60)
     : null;
 
