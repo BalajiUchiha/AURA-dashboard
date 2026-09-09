@@ -219,9 +219,12 @@ def _execute_pipeline_cycle():
 
     # Build cache payload with calibrated display metrics (Capacity %, Runtime s, Range km)
     now_iso = datetime.now(timezone.utc).isoformat()
-    volt = float(latest.get("voltage", 0))
+    raw_v = latest.get("voltage", 0)
+    norm_v = cfg.normalize_pack_voltage(raw_v)
+    volt = norm_v if norm_v is not None else (float(raw_v) if raw_v else 10.5)
     rem_wh = float(latest.get("remaining_wh", 0))
     pow_w = float(latest.get("power_w", 0))
+    speed = float(latest.get("speed", 0))
 
     v_full = getattr(cfg, "PACK_V_FULL", 10.6)
     v_empty = getattr(cfg, "PACK_V_EMPTY", 8.4)
@@ -242,11 +245,12 @@ def _execute_pipeline_cycle():
     # Runtime calculation based on effective_rem_wh (guarantees 0.0s when cap_pct == 0.0%)
     if cap_pct <= 0 or effective_rem_wh <= 0:
         runtime_s = 0.0
-    elif pow_w >= 0.5:
+    elif pow_w >= 5.0 and speed >= 0.5:
         raw_runtime_s = (effective_rem_wh / pow_w) * 3600.0
-        runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)  # max 4 hours under load
+        runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)
     else:
-        runtime_s = round(min(14400.0, (effective_rem_wh / 15.0) * 3600.0), 1)  # nominal ~15W idle load
+        # Stationary / idle load: evaluate against nominal ~15W load (prevents 240 min explosion under 0.9W load)
+        runtime_s = round(min(14400.0, (effective_rem_wh / 15.0) * 3600.0), 1)
 
     # Calibrate range (km) using effective_rem_wh
     raw_range = float(latest.get("range_km", 0))

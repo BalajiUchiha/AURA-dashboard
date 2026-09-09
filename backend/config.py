@@ -82,3 +82,22 @@ MQTT_TOPIC          = os.getenv("MQTT_TOPIC", "aura/vehicle/data")
 ELEVENLABS_API_KEY  = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")  # default: "George" (British Male)
 
+
+def normalize_pack_voltage(v: float) -> float | None:
+    """
+    Normalizes single-cell (2.0-4.5V) and 2-cell tapping (4.5-7.5V) telemetry
+    into the 3S pack voltage range (8.4V-10.6V). Filters out sub-2V noise pulses.
+    """
+    try:
+        v = float(v or 0.0)
+    except (ValueError, TypeError):
+        return None
+    if v <= 0.0 or v < 2.0:
+        return None
+    if 2.0 <= v <= 4.5:
+        return round(v * 3.0, 2)
+    if 4.5 < v <= 7.5:
+        return round(v * 1.5, 2)
+    return round(v, 2)
+
+

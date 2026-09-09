@@ -35,6 +35,8 @@ if not logger.handlers:
 LIVE_INSERT_INTERVAL_S = float(getattr(cfg, "LIVE_INSERT_INTERVAL_S", 2.5))
 HISTORY_INSERT_INTERVAL_S = float(getattr(cfg, "HISTORY_INSERT_INTERVAL_S", 5.0))
 
+_last_valid_voltage: float = 10.5
+
 # ── Global State ──────────────────────────────────────────────────────
 _client: Optional[mqtt.Client] = None
 _is_connected: bool = False
@@ -83,7 +85,7 @@ def _on_disconnect(client, userdata, *args, **kwargs):
 
 def _on_message(client, userdata, msg):
     """Callback when a telemetry payload is published to the subscribed topic."""
-    global _last_message_timestamp, _last_live_insert_time, _last_history_insert_time
+    global _last_message_timestamp, _last_live_insert_time, _last_history_insert_time, _last_valid_voltage
     now_iso = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -94,7 +96,11 @@ def _on_message(client, userdata, msg):
         speed_val = float(data.get("speed") if data.get("speed") is not None else data.get("spd", 0.0))
         rpm_val = float(data.get("rpm", 0.0))
         dist_val = float(data.get("distance_m") if data.get("distance_m") is not None else data.get("distance", 0.0))
-        volt_val = float(data.get("voltage") if data.get("voltage") is not None else data.get("v", 0.0))
+        raw_volt = float(data.get("voltage") if data.get("voltage") is not None else data.get("v", 0.0))
+        norm_v = cfg.normalize_pack_voltage(raw_volt)
+        if norm_v is not None:
+            _last_valid_voltage = norm_v
+        volt_val = norm_v if norm_v is not None else _last_valid_voltage
         curr_val = float(data.get("current_a") if data.get("current_a") is not None else (data.get("current") if data.get("current") is not None else data.get("c", 0.0)))
         pwr_val = float(data.get("power_w") if data.get("power_w") is not None else data.get("power", 0.0))
         eng_val = float(data.get("energy_wh") if data.get("energy_wh") is not None else data.get("energy", 0.0))

@@ -166,7 +166,9 @@ def _run_cycle():
 
     # ── Calculate reframed range metrics (Capacity % and Runtime s) ───
     pow_w = float(latest.get("power_w", 0))
-    volt = float(fv)
+    norm_v = cfg.normalize_pack_voltage(fv)
+    volt = norm_v if norm_v is not None else (float(fv) if fv else 10.5)
+    speed = float(latest.get("speed", 0))
     v_full = getattr(cfg, "PACK_V_FULL", 10.6)
     v_empty = getattr(cfg, "PACK_V_EMPTY", 8.4)
     tot_wh = getattr(cfg, "BATTERY_ENERGY_WH", 25.0)
@@ -177,7 +179,7 @@ def _run_cycle():
 
     if cap_pct <= 0 or effective_rem_wh <= 0:
         runtime_s = 0.0
-    elif pow_w >= 0.5:
+    elif pow_w >= 5.0 and speed >= 0.5:
         raw_runtime_s = (effective_rem_wh / pow_w) * 3600.0
         runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)
     else:

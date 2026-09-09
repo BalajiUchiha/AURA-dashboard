@@ -232,26 +232,29 @@ def update_live_data(telemetry: dict) -> dict | None:
     """
     UPDATE / UPSERT live_data WHERE id=1
     Overwrites/updates the single live telemetry record in real-time.
+    Includes transient retry loop to absorb network latency glitches.
     """
     if _client is not None:
-        try:
-            payload = {k: v for k, v in telemetry.items() if v is not None and k != "created_at"}
-            payload["id"] = 1
-            payload["updated_at"] = datetime.now(timezone.utc).isoformat()
-            
-            # Perform explicit update on row id=1
-            res = _client.table("live_data").update(payload).eq("id", 1).execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0]
-            
-            # Fallback to upsert with explicit on_conflict="id" if row id=1 doesn't exist yet
-            res_upsert = _client.table("live_data").upsert(payload, on_conflict="id").execute()
-            return res_upsert.data[0] if res_upsert.data else {"id": 1}
-        except Exception as e:
-            print(f"  ⚠️  Supabase live_data update warning: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        payload = {k: v for k, v in telemetry.items() if v is not None and k != "created_at"}
+        payload["id"] = 1
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        for attempt in range(2):
+            try:
+                # Perform explicit update on row id=1
+                res = _client.table("live_data").update(payload).eq("id", 1).execute()
+                if res.data and len(res.data) > 0:
+                    return res.data[0]
+
+                # Fallback to upsert with explicit on_conflict="id" if row id=1 doesn't exist yet
+                res_upsert = _client.table("live_data").upsert(payload, on_conflict="id").execute()
+                return res_upsert.data[0] if res_upsert.data else {"id": 1}
+            except Exception as e:
+                if attempt == 0:
+                    time.sleep(0.1)
+                    continue
+                print(f"  ⚠️  Supabase live_data update warning: {e}")
+                return None
     return {"id": 1}
 
 
@@ -259,22 +262,25 @@ def insert_history_data(telemetry: dict) -> dict | None:
     """
     INSERT INTO history_data (...)
     Appends a new telemetry record for history tracking (same as Node-RED history path).
-    Returns inserted row data including generated row ID and created_at timestamp.
+    Includes transient retry loop to absorb network latency glitches.
     """
     if _client is not None:
-        try:
-            payload = {k: v for k, v in telemetry.items() if v is not None}
-            if "created_at" not in payload:
-                payload["created_at"] = datetime.now(timezone.utc).isoformat()
-            res = _client.table("history_data").insert(payload).execute()
-            if res.data:
-                return res.data[0]
-            return payload
-        except Exception as e:
-            print(f"  ⚠️  Supabase history_data insert warning: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        payload = {k: v for k, v in telemetry.items() if v is not None}
+        if "created_at" not in payload:
+            payload["created_at"] = datetime.now(timezone.utc).isoformat()
+
+        for attempt in range(2):
+            try:
+                res = _client.table("history_data").insert(payload).execute()
+                if res.data:
+                    return res.data[0]
+                return payload
+            except Exception as e:
+                if attempt == 0:
+                    time.sleep(0.1)
+                    continue
+                print(f"  ⚠️  Supabase history_data insert warning: {e}")
+                return None
     return None
 
 
