@@ -1,0 +1,61 @@
+[TEST] existing_data_readthrough
+[TYPE] smoke_test
+[INPUT] Fetch existing last 10 rows from Supabase history_data and run full pipeline once
+[OUTPUT] alert_flag=unusual_power_draw, alert_message="Filtered current rising at 0.1100 A/s (smoothed: 1.99A) but speed barely changing (rate: 0.0000 km/h/s, smoothed: 14.0 km/h) — unusual power draw detected; possible motor or drivetrain issue.", degradation_percent=9.08, confidence=low, primary_factor=C-Rate (Load Intensity), adjusted_range_km=0.55, station_name=None, station_distance_km=None, jarvis_message="Your vehicle is cruising at 14 km/h, but an unusual power draw suggests a possible motor or drivetrain issue. The battery is at about 65 % capacity, giving roughly 2,860 seconds (≈48 minutes) of runtime and about 0.6 km of range. Please drive cautiously and keep an eye on the vehicle’s performance."
+[STATUS] PASS
+[REASON] Completed all steps successfully with live JARVIS message.
+---
+[TEST] normal_condition_insert_then_run
+[TYPE] integration_test
+[INPUT] Insert 10 rows simulating NORMAL driving on weak pack: stable voltage (7.6V), current (1.1A), speed (14 km/h) with noise.
+[OUTPUT] alert_flag=none, alert_message="All systems nominal. Filtered voltage: 7.61V (+0.0022 V/s), current: 1.10A (-0.0006 A/s), speed: 14.0 km/h.", degradation_percent=15.15, confidence=high, primary_factor=C-Rate (Load Intensity), adjusted_range_km=0.68, station_name=None, station_distance_km=None, jarvis_message="All systems are nominal; you’re traveling at 14 km/h with a voltage of 7.61 V, current 1.1 A and a power draw of 8.4 W. The battery is at 81 % capacity (15 Wh remaining), giving roughly 1 hour 48 minutes (≈6,460 s) of runtime and about 0.7 km of range, with a 15 % degradation mainly from load intensity. Continue driving, but monitor the remaining energy as it will decrease."
+[STATUS] PASS
+[REASON] OK
+---
+[TEST] thermal_stress_insert_then_run
+[TYPE] integration_test
+[INPUT] Insert 10 rows simulating THERMAL STRESS: voltage falling 7.6V->7.15V (rate < -0.035 V/s), current rising 1.0A->1.8A (rate > 0.05 A/s).
+[OUTPUT] alert_flag=thermal_stress_indicator, alert_message="Filtered voltage dropping at -0.0500 V/s (smoothed: 7.15V) while current rising at 0.0880 A/s (smoothed: 1.79A) — possible rising internal resistance indicating battery stress.", degradation_percent=43.5, confidence=high, primary_factor=Internal Resistance, adjusted_range_km=0.34, station_name=None, station_distance_km=None, jarvis_message="You’re traveling at 14 km/h with about 65 % battery remaining (12 Wh), which gives roughly 56 minutes of runtime and 0.3 km of range. A thermal‑stress alert shows voltage dropping while current rises, indicating increasing internal resistance—drive smoothly to lessen battery strain."
+[STATUS] PASS
+[REASON] OK
+---
+[TEST] low_battery_insert_then_run
+[TYPE] integration_test
+[INPUT] Insert 10 rows with low voltage (~6.2V < 6.5V cutoff).
+[OUTPUT] alert_flag=low_battery, alert_message="Filtered battery voltage critically low at 6.20V (threshold: 6.5V, rate: 0.0000 V/s).", degradation_percent=15.19, confidence=low, primary_factor=C-Rate (Load Intensity), adjusted_range_km=0.25, station_name=None, station_distance_km=None, jarvis_message="Battery voltage is low at 6.2 V, with only 16.2 % (3 Wh) of capacity remaining, giving an estimated runtime of about 1,580 seconds (≈26 minutes) and roughly 0.2 km of range. The battery shows moderate degradation (≈15 %) due to high load. Please drive conservatively and plan to stop soon in a safe location."
+[STATUS] PASS
+[REASON] OK
+---
+[TEST] unusual_power_draw_insert_then_run
+[TYPE] integration_test
+[INPUT] Insert 10 rows with current rising sharply (1.0A->2.0A, rate > 0.08 A/s) while speed is flat (14 km/h) and voltage stable (7.6V).
+[OUTPUT] alert_flag=unusual_power_draw, alert_message="Filtered current rising at 0.1100 A/s (smoothed: 1.99A) but speed barely changing (rate: 0.0000 km/h/s, smoothed: 14.0 km/h) — unusual power draw detected; possible motor or drivetrain issue.", degradation_percent=9.08, confidence=low, primary_factor=C-Rate (Load Intensity), adjusted_range_km=0.55, station_name=None, station_distance_km=None, jarvis_message="You’re traveling at 14 km/h with about 65 % battery remaining (≈12 Wh), giving roughly 48 minutes of runtime and 0.6 km of range. The system has flagged an unusual power draw—current is rising while speed stays steady, which may indicate a motor or drivetrain issue; please monitor performance and drive cautiously."
+[STATUS] PASS
+[REASON] OK
+---
+[TEST] ekf_smoothing_sanity_check
+[TYPE] unit_test
+[INPUT] Feed EKF a single-point noise glitch (7.6V -> 5.5V spike -> 7.5V) and verify filtered rate stays small
+[OUTPUT] alert_flag=unit_test, alert_message="EKF smoothed noise spike successfully. Max rate: 1.0182 V/s", degradation_percent=None, confidence=None, primary_factor=None, adjusted_range_km=None, station_name=None, station_distance_km=None, jarvis_message="Raw spike of 2.1V filtered to max rate 1.0182 V/s."
+[STATUS] PASS
+[REASON] OK (max filtered rate: 1.0182 V/s vs raw delta 2.10V)
+---
+[TEST] groq_llm_api_check
+[TYPE] config_check
+[INPUT] Verify Groq API endpoint (chat/completions) returns a valid response with configured model.
+[OUTPUT] alert_flag=config_check, alert_message="Endpoint checked: https://api.groq.com/openai/v1/chat/completions (key=gsk_SXkC...FW8P, model=groq/compound) -> HTTP 200", degradation_percent=None, confidence=None, primary_factor=None, adjusted_range_km=None, station_name=None, station_distance_km=None, jarvis_message="I’m unable to access real‑time data, so I cannot determine JARVIS’s current status, but as noted earlier, I don’t have access to its status at this moment."
+[STATUS] PASS
+[REASON] OK (HTTP 200 via Groq, model=groq/compound)
+---
+[TEST] graceful_failure_check
+[TYPE] resilience_test
+[INPUT] Verify low battery condition on weak pack (~6.2V) completes cleanly with station set to null.
+[OUTPUT] alert_flag=low_battery, alert_message="Filtered battery voltage critically low at 6.20V (threshold: 6.5V, rate: 0.0000 V/s).", degradation_percent=15.19, confidence=low, primary_factor=C-Rate (Load Intensity), adjusted_range_km=0.25, station_name=None, station_distance_km=None, jarvis_message="Your battery is at 16.2 % (about 3 Wh) with a critically low voltage of 6.2 V, giving an estimated runtime of roughly 1,580 seconds (≈26 minutes) and about 0.2 km of range left. To preserve what’s left, consider reducing speed and planning to stop soon."
+[STATUS] PASS
+[REASON] OK (station=None, valid JARVIS message)
+---
+
+[SUMMARY] 8/8 tests passed
+[FAILED TESTS]
+None
+

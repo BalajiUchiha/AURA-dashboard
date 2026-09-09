@@ -1,0 +1,51 @@
+{
+  "feature_names": [
+    "voltage_sag_rate",
+    "voltage_drop_pct",
+    "current_spike_ratio",
+    "resistance_proxy",
+    "voltage_cv",
+    "current_cv",
+    "speed_cv",
+    "dod_rate_pct_per_s",
+    "c_rate",
+    "speed_current_corr"
+  ],
+  "test_mae_percentage_points": 4.181,
+  "test_r2": 0.74,
+  "feature_importances": {
+    "voltage_sag_rate": 0.0032,
+    "voltage_drop_pct": 0.008,
+    "current_spike_ratio": 0.0061,
+    "resistance_proxy": 0.5143,
+    "voltage_cv": 0.1528,
+    "current_cv": 0.0487,
+    "speed_cv": 0.0159,
+    "dod_rate_pct_per_s": 0.0033,
+    "c_rate": 0.2241,
+    "speed_current_corr": 0.0238
+  },
+  "n_training_rows": 9984,
+  "n_test_rows": 2496,
+  "model_type": "RandomForestRegressor",
+  "sklearn_params": {
+    "bootstrap": true,
+    "ccp_alpha": 0.0,
+    "criterion": "squared_error",
+    "max_depth": 10,
+    "max_features": 1.0,
+    "max_leaf_nodes": null,
+    "max_samples": null,
+    "min_impurity_decrease": 0.0,
+    "min_samples_leaf": 4,
+    "min_samples_split": 2,
+    "min_weight_fraction_leaf": 0.0,
+    "monotonic_cst": null,
+    "n_estimators": 250,
+    "n_jobs": -1,
+    "oob_score": false,
+    "random_state": 42,
+    "verbose": 0,
+    "warm_start": false
+  }
+}
