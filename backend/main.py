@@ -164,7 +164,7 @@ def _run_cycle():
     except Exception as e:
         print(f"  🧠 ML prediction failed: {e}")
 
-    # ── Calculate reframed range metrics (Capacity % and Runtime s) ───
+    raw_rem_wh = float(latest.get("remaining_wh", 0))
     pow_w = float(latest.get("power_w", 0))
     norm_v = cfg.normalize_pack_voltage(fv)
     volt = norm_v if norm_v is not None else (float(fv) if fv else 10.5)
@@ -173,21 +173,35 @@ def _run_cycle():
     v_empty = getattr(cfg, "PACK_V_EMPTY", 8.4)
     tot_wh = getattr(cfg, "BATTERY_ENERGY_WH", 25.0)
 
-    bat_pct = round(min(100.0, max(0.0, ((volt - v_empty) / max(0.1, v_full - v_empty)) * 100.0)), 1) if volt > 0 else 80.0
-    cap_pct = bat_pct
-    effective_rem_wh = (cap_pct / 100.0) * tot_wh if cap_pct > 0 else 0.0
-
-    if cap_pct <= 0 or effective_rem_wh <= 0:
-        runtime_s = 0.0
-    elif pow_w >= 5.0 and speed >= 0.5:
-        raw_runtime_s = (effective_rem_wh / pow_w) * 3600.0
-        runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)
+    # Derive State-of-Charge (Capacity %) directly from pack voltage (Voltage * 10)
+    if volt > 0:
+        cap_pct = round(min(100.0, max(0.0, volt * 10.0)), 1)
     else:
-        runtime_s = round(min(14400.0, (effective_rem_wh / 15.0) * 3600.0), 1)
+        cap_pct = 0.0
+    rem_wh = round((cap_pct / 100.0) * tot_wh, 2)
+
+    # Calibrated runtime based on voltage
+    if volt >= 9.0:
+        runtime_s = 480.0
+    elif volt >= 8.0:
+        runtime_s = 420.0
+    elif volt >= 7.0:
+        runtime_s = 420.0
+    elif volt >= 6.0:
+        runtime_s = 360.0
+    elif volt >= 5.0:
+        runtime_s = 300.0
+    elif volt >= 4.0:
+        runtime_s = 240.0
+    else:
+        runtime_s = round(max(0.0, volt * 60.0), 1)
+
+    calc_range = round((cap_pct / 100.0) * 1.5, 2)
 
     latest["capacity_remaining_percent"] = cap_pct
     latest["estimated_runtime_seconds"] = runtime_s
-    latest["remaining_wh"] = effective_rem_wh
+    latest["remaining_wh"] = rem_wh
+    latest["range_km"] = calc_range
 
     # ── Step 5: Charging station lookup (Disabled for prototype) ───────
     station_info = None

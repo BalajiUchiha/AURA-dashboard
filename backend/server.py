@@ -222,7 +222,7 @@ def _execute_pipeline_cycle():
     raw_v = latest.get("voltage", 0)
     norm_v = cfg.normalize_pack_voltage(raw_v)
     volt = norm_v if norm_v is not None else (float(raw_v) if raw_v else 10.5)
-    rem_wh = float(latest.get("remaining_wh", 0))
+    raw_rem_wh = float(latest.get("remaining_wh", 0))
     pow_w = float(latest.get("power_w", 0))
     speed = float(latest.get("speed", 0))
 
@@ -230,41 +230,38 @@ def _execute_pipeline_cycle():
     v_empty = getattr(cfg, "PACK_V_EMPTY", 8.4)
     tot_wh = getattr(cfg, "BATTERY_ENERGY_WH", 25.0)
 
-    # Battery percentage derived from configured voltage window
+    # Derive State-of-Charge (Capacity %) directly from pack voltage (Voltage * 10)
     if volt > 0:
-        bat_pct = round(min(100.0, max(0.0, ((volt - v_empty) / max(0.1, v_full - v_empty)) * 100.0)), 1)
+        bat_pct = round(min(100.0, max(0.0, volt * 10.0)), 1)
     else:
-        bat_pct = 80.0
-
-    # Capacity percentage aligned with voltage percentage
+        bat_pct = 0.0
     cap_pct = bat_pct
+    tot_wh = getattr(cfg, "BATTERY_ENERGY_WH", 25.0)
+    rem_wh = round((cap_pct / 100.0) * tot_wh, 2)
 
-    # Calibrate usable effective remaining Wh with cap_pct
-    effective_rem_wh = (cap_pct / 100.0) * tot_wh if cap_pct > 0 else 0.0
-
-    # Runtime calculation based on effective_rem_wh (guarantees 0.0s when cap_pct == 0.0%)
-    if cap_pct <= 0 or effective_rem_wh <= 0:
-        runtime_s = 0.0
-    elif pow_w >= 5.0 and speed >= 0.5:
-        raw_runtime_s = (effective_rem_wh / pow_w) * 3600.0
-        runtime_s = round(min(14400.0, max(0.0, raw_runtime_s)), 1)
+    # Calibrated runtime based on voltage (9-10V: 8 min, 8V: 7 min, 7V: 7 min, 6V: 6 min, 5V: 5 min, 4V: 4 min)
+    if volt >= 9.0:
+        runtime_s = 480.0
+    elif volt >= 8.0:
+        runtime_s = 420.0
+    elif volt >= 7.0:
+        runtime_s = 420.0
+    elif volt >= 6.0:
+        runtime_s = 360.0
+    elif volt >= 5.0:
+        runtime_s = 300.0
+    elif volt >= 4.0:
+        runtime_s = 240.0
     else:
-        # Stationary / idle load: evaluate against nominal ~15W load (prevents 240 min explosion under 0.9W load)
-        runtime_s = round(min(14400.0, (effective_rem_wh / 15.0) * 3600.0), 1)
+        runtime_s = round(max(0.0, volt * 60.0), 1)
 
-    # Calibrate range (km) using effective_rem_wh
-    raw_range = float(latest.get("range_km", 0))
-    if raw_range > 10.0 or raw_range <= 0:
-        epk = float(latest.get("energy_per_km", 20.0))
-        if epk < 15.0 or epk > 100.0:
-            epk = 20.0
-        calc_range = round(effective_rem_wh / epk, 2) if effective_rem_wh > 0 else 0.0
-    else:
-        calc_range = raw_range
+    # Calibrate range (km) using capacity percentage (10V/100% = 1.50 km)
+    calc_range = round((cap_pct / 100.0) * 1.5, 2)
 
     latest["capacity_remaining_percent"] = cap_pct
     latest["estimated_runtime_seconds"] = runtime_s
-    latest["remaining_wh"] = effective_rem_wh
+    latest["remaining_wh"] = rem_wh
+    latest["range_km"] = calc_range
 
     cache_payload = {
         "timestamp": now_iso,

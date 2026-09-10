@@ -255,7 +255,7 @@ def update_live_data(telemetry: dict) -> dict | None:
                     continue
                 print(f"  ⚠️  Supabase live_data update warning: {e}")
                 return None
-    return {"id": 1}
+    return {"id": 1, "simulated": True}
 
 
 def insert_history_data(telemetry: dict) -> dict | None:
@@ -281,7 +281,7 @@ def insert_history_data(telemetry: dict) -> dict | None:
                     continue
                 print(f"  ⚠️  Supabase history_data insert warning: {e}")
                 return None
-    return None
+    return {"id": 0, "created_at": telemetry.get("created_at") or datetime.now(timezone.utc).isoformat(), "simulated": True}
 
 
 

@@ -1,15 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { WS_URL, getLatest } from "@/lib/aura-api";
-import { demoFrame } from "@/lib/demo-feed";
+import { demoFrame, SIMULATED_SCENARIOS } from "@/lib/demo-feed";
 import type { AuraTelemetry, LinkState } from "@/lib/aura-types";
+import type { SimulatedEventScenario } from "@/components/aura/ScenarioModal";
 
-/**
- * Live telemetry feed.
- * 1. Tries the backend WebSocket (/ws/live).
- * 2. Falls back to polling GET /latest every 4s.
- * 3. If the backend is unreachable entirely, runs a local simulation so the
- *    HUD never renders blank.
- */
 function normalizeFrame(raw: any): AuraTelemetry | null {
   if (!raw) return null;
   if (raw.status === "warming_up") return raw;
@@ -17,7 +11,7 @@ function normalizeFrame(raw: any): AuraTelemetry | null {
   const veh = raw.vehicle || {};
   const pred = raw.prediction || {};
   const volt = raw.voltage ?? veh.voltage ?? raw.filtered?.voltage ?? 0;
-  const bat = raw.capacity_remaining_percent ?? raw.battery_pct ?? (volt > 0 ? Math.min(100, Math.max(0, Math.round((volt / 10.6) * 100))) : 80);
+  const bat = raw.capacity_remaining_percent ?? raw.battery_pct ?? (volt > 0 ? Math.min(100, Math.max(0, Math.round(volt * 10))) : 80);
 
   return {
     ...raw,
@@ -38,13 +32,74 @@ function normalizeFrame(raw: any): AuraTelemetry | null {
   };
 }
 
+export type FeedMode = "live" | "simulated";
+
 export function useAuraFeed() {
   const [frame, setFrame] = useState<AuraTelemetry | null>(null);
   const [link, setLink] = useState<LinkState>("booting");
+  const [feedMode, setFeedMode] = useState<FeedMode>("live");
+
+  // Simulation state
+  const [simEventIndex, setSimEventIndex] = useState(0);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
   const socketRef = useRef<WebSocket | null>(null);
   const failuresRef = useRef(0);
+  const nextTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Toggle Mode helper
+  const toggleFeedMode = useCallback((mode?: FeedMode) => {
+    const target = mode ?? (feedMode === "live" ? "simulated" : "live");
+    setFeedMode(target);
+
+    if (nextTimerRef.current) {
+      clearTimeout(nextTimerRef.current);
+      nextTimerRef.current = null;
+    }
+
+    if (target === "simulated") {
+      setLink("simulated");
+      setSimEventIndex(0);
+      setIsModalOpen(true);
+      // Pre-set frame to event 1 telemetry
+      setFrame(normalizeFrame(SIMULATED_SCENARIOS[0].telemetry));
+    } else {
+      setIsModalOpen(false);
+      setLink("booting");
+    }
+  }, [feedMode]);
+
+  // Close modal -> activate event run on dashboard
+  const closeModal = useCallback(() => {
+    setIsModalOpen(false);
+    const scenario = SIMULATED_SCENARIOS[simEventIndex];
+    if (scenario) {
+      setFrame(normalizeFrame(scenario.telemetry));
+    }
+  }, [simEventIndex]);
+
+  // Handle Speech Completion -> 3s delay -> Advance to next event modal
+  const handleSpeechFinished = useCallback(() => {
+    if (feedMode !== "simulated" || isModalOpen) return;
+
+    if (nextTimerRef.current) {
+      clearTimeout(nextTimerRef.current);
+    }
+
+    nextTimerRef.current = setTimeout(() => {
+      setSimEventIndex((prevIndex) => {
+        const nextIndex = (prevIndex + 1) % SIMULATED_SCENARIOS.length;
+        setIsModalOpen(true);
+        setFrame(normalizeFrame(SIMULATED_SCENARIOS[nextIndex].telemetry));
+        return nextIndex;
+      });
+    }, 3000);
+  }, [feedMode, isModalOpen]);
+
+  // Live WebSocket / Polling Effect
   useEffect(() => {
+    if (feedMode !== "live") return;
+
     let disposed = false;
     let poll: ReturnType<typeof setInterval> | null = null;
     let sim: ReturnType<typeof setInterval> | null = null;
@@ -115,13 +170,12 @@ export function useAuraFeed() {
         try {
           const parsed = JSON.parse(event.data as string);
           if (parsed && parsed.status === "warming_up" && !frame) {
-            // Keep warming state until real frame or polling resolves
             return;
           }
           setFrame(normalizeFrame(parsed));
           setLink("live");
         } catch {
-          /* ignore malformed frame */
+          /* ignore */
         }
       };
       socket.onerror = () => socket.close();
@@ -151,8 +205,21 @@ export function useAuraFeed() {
         }
       }
     };
-  }, []);
+  }, [feedMode]);
 
+  const currentScenario: SimulatedEventScenario = SIMULATED_SCENARIOS[simEventIndex] || SIMULATED_SCENARIOS[0];
   const warming = !frame || frame.status === "warming_up";
-  return { frame, link, warming };
+
+  return {
+    frame,
+    link,
+    warming,
+    feedMode,
+    toggleFeedMode,
+    isModalOpen,
+    closeModal,
+    currentScenario,
+    totalScenarios: SIMULATED_SCENARIOS.length,
+    handleSpeechFinished,
+  };
 }

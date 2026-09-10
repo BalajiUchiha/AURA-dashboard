@@ -1,5 +1,4 @@
-import { useState } from "react";
-
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useAuraFeed } from "@/hooks/useAuraFeed";
 import { useJarvisSpeech } from "@/hooks/useJarvisSpeech";
@@ -11,7 +10,7 @@ import { ChargingCard } from "./ChargingCard";
 import { AuraLoader } from "./AuraLoader";
 import { DetailsDisclosure } from "./DetailsDisclosure";
 import { AuraNav } from "./AuraNav";
-
+import { ScenarioModal } from "./ScenarioModal";
 
 const LINK_LABEL: Record<string, { text: string; dot: string }> = {
   booting: { text: "Connecting", dot: "bg-hud-warn" },
@@ -23,8 +22,39 @@ const LINK_LABEL: Record<string, { text: string; dot: string }> = {
 
 export function Dashboard() {
   const [booted, setBooted] = useState(false);
-  const { frame, link, warming } = useAuraFeed();
-  const { typed, speaking, complete, voice } = useJarvisSpeech(frame?.jarvis_message ?? null);
+
+  const {
+    frame,
+    link,
+    warming,
+    feedMode,
+    toggleFeedMode,
+    isModalOpen,
+    closeModal,
+    currentScenario,
+    totalScenarios,
+    handleSpeechFinished,
+  } = useAuraFeed();
+
+  // JARVIS voice speech plays ONLY AFTER the briefing popup is closed
+  const speechText = isModalOpen ? null : (frame?.jarvis_message ?? null);
+  const { typed, speaking, complete, voice } = useJarvisSpeech(speechText);
+
+  // Trigger 3s delay & auto-advance ONLY after speech & typing 100% finish in simulated mode
+  useEffect(() => {
+    const msg = frame?.jarvis_message;
+    if (
+      complete &&
+      !speaking &&
+      feedMode === "simulated" &&
+      !isModalOpen &&
+      msg &&
+      typed.length >= msg.length
+    ) {
+      handleSpeechFinished();
+    }
+  }, [complete, speaking, feedMode, isModalOpen, frame?.jarvis_message, typed, handleSpeechFinished]);
+
   const status = LINK_LABEL[link] ?? LINK_LABEL["booting"]!;
 
   const runtimeMinutes = typeof frame?.estimated_runtime_seconds === "number"
@@ -36,16 +66,53 @@ export function Dashboard() {
       {!booted && <BootSequence onDone={() => setBooted(true)} />}
       <div className="hud-grid pointer-events-none fixed inset-0 opacity-60" />
 
+      {/* Scenario Briefing Modal in Simulated Mode */}
+      {feedMode === "simulated" && (
+        <ScenarioModal
+          isOpen={isModalOpen}
+          event={currentScenario}
+          totalEvents={totalScenarios}
+          onClose={closeModal}
+        />
+      )}
+
       <main className="relative mx-auto w-full max-w-6xl px-5 py-8 md:px-8 md:py-12">
         <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-baseline gap-4">
+          {/* Header Title + Mode Toggle (Left next to Title) */}
+          <div className="flex items-center gap-4">
             <h1 className="text-glow text-hud text-3xl font-semibold tracking-[0.45em] md:text-4xl">
               AURA
             </h1>
-            <span className="text-[10px] tracking-[0.3em] text-muted-foreground uppercase">
+
+            {/* Mode Toggle Switch */}
+            <div className="panel-brutal flex items-center p-0.5">
+              <button
+                onClick={() => toggleFeedMode("live")}
+                className={`px-3 py-1 text-[9px] tracking-[0.25em] font-medium uppercase transition-all ${
+                  feedMode === "live"
+                    ? "border border-hud bg-hud/20 text-hud shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                LIVE
+              </button>
+              <button
+                onClick={() => toggleFeedMode("simulated")}
+                className={`px-3 py-1 text-[9px] tracking-[0.25em] font-medium uppercase transition-all ${
+                  feedMode === "simulated"
+                    ? "border border-hud-warn bg-hud-warn/20 text-hud-warn shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                SIMULATED
+              </button>
+            </div>
+
+            <span className="hidden text-[10px] tracking-[0.3em] text-muted-foreground uppercase sm:inline">
               EV Command Deck
             </span>
           </div>
+
           <div className="flex flex-col items-end gap-2">
             <AuraNav />
             <div className="panel-brutal flex items-center gap-3 px-4 py-2">

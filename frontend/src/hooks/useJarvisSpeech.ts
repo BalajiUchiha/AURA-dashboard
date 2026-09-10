@@ -2,17 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { postTts, type TtsAlignment } from "@/lib/aura-api";
 
 /**
- * Speaks a JARVIS message through the backend /tts endpoint and types it out.
- *
- * Preferred path: /tts returns { audio_base64, alignment }. The alignment gives
- * per-character start timestamps, so a requestAnimationFrame loop reads the
- * audio element's `currentTime` and reveals exactly the characters that have
- * already been spoken. Typing therefore inherits the real speech rhythm
- * (pauses, drawn-out words) instead of a constant rate, and stays correct even
- * if playback stutters or is delayed.
- *
- * Fallback path (alignment null or /tts failure): unchanged — even pacing over
- * the audio duration, or 30ms/char with no audio at all.
+ * Speaks a JARVIS message through the backend /tts endpoint and types it out in perfect sync.
+ * Prevents voice overlaps by cancelling Web SpeechSynthesis and HTML Audio on every new message.
  */
 export function useJarvisSpeech(message: string | null | undefined) {
   const [typed, setTyped] = useState("");
@@ -21,6 +12,22 @@ export function useJarvisSpeech(message: string | null | undefined) {
   const [voice, setVoice] = useState<"idle" | "audio" | "text-only">("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastSpokenMessageRef = useRef<string>("");
+
+  // Helper to stop all playing audio and speech synthesis immediately
+  const stopAllSpeech = () => {
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      } catch {}
+      audioRef.current = null;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
+  };
 
   // Global user gesture unlock for browser audio / speech synthesis
   useEffect(() => {
@@ -42,11 +49,14 @@ export function useJarvisSpeech(message: string | null | undefined) {
   }, []);
 
   useEffect(() => {
+    stopAllSpeech();
+
     if (!message) {
       lastSpokenMessageRef.current = "";
       setTyped("");
       setComplete(false);
       setSpeaking(false);
+      setVoice("idle");
       return;
     }
 
@@ -56,8 +66,8 @@ export function useJarvisSpeech(message: string | null | undefined) {
     lastSpokenMessageRef.current = message;
 
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    let frame: number | null = null;
+    let typeInterval: ReturnType<typeof setInterval> | null = null;
+    let frameId: number | null = null;
     let release: (() => void) | null = null;
     const controller = new AbortController();
 
@@ -65,66 +75,51 @@ export function useJarvisSpeech(message: string | null | undefined) {
     setComplete(false);
     setSpeaking(true);
 
+    let audioDone = false;
+    let typingDone = false;
+
     const finish = () => {
+      if (cancelled) return;
+      if (typeInterval) {
+        clearInterval(typeInterval);
+        typeInterval = null;
+      }
       setTyped(message);
       setComplete(true);
       setSpeaking(false);
     };
 
-    /** Fallback / immediate typewriter reveal. */
-    const type = (msPerChar: number) => {
-      if (cancelled) return;
-      if (timer) clearInterval(timer);
-      let i = 0;
-      timer = setInterval(() => {
-        i += 1;
-        setTyped(message.slice(0, i));
-        if (i >= message.length) {
-          if (timer) clearInterval(timer);
-          timer = null;
-          finish();
-        }
-      }, Math.max(8, msPerChar));
+    const tryFinish = () => {
+      if (audioDone && typingDone) {
+        finish();
+      }
     };
 
-    // Immediately start character reveal so panel never freezes blank while fetching /tts audio
-    type(30);
+    // Start typewriter reveal immediately so panel never stays blank
+    const startTypewriter = (durationSeconds?: number) => {
+      if (typeInterval) clearInterval(typeInterval);
+      let charIndex = 0;
+      // Calculate ms per character based on audio duration or default ~35ms
+      const msPerChar = durationSeconds && durationSeconds > 0
+        ? Math.max(15, (durationSeconds * 1000) / message.length)
+        : 35;
 
-    /** Alignment-driven reveal, clocked off the audio element itself. */
-    const typeWithAlignment = (audio: HTMLAudioElement, alignment: TtsAlignment) => {
-      const starts = alignment.character_start_times_seconds;
-      const chars = alignment.characters ?? [];
-      const exact = chars.join("") === message;
-      const scale = starts.length > 0 ? message.length / starts.length : 1;
-
-      const tick = () => {
+      typeInterval = setInterval(() => {
         if (cancelled) return;
-        const t = audio.currentTime;
-        let lo = 0;
-        let hi = starts.length;
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1;
-          if ((starts[mid] ?? 0) <= t) lo = mid + 1;
-          else hi = mid;
+        charIndex += 1;
+        setTyped(message.slice(0, charIndex));
+
+        if (charIndex >= message.length) {
+          if (typeInterval) clearInterval(typeInterval);
+          typeInterval = null;
+          typingDone = true;
+          tryFinish();
         }
-        const i = lo;
-
-        const shown = exact ? i : Math.round(i * scale);
-        setTyped(message.slice(0, Math.min(shown, message.length)));
-
-        const done = i >= starts.length && (audio.ended || audio.currentTime >= audio.duration);
-        if (done) {
-          finish();
-          return;
-        }
-        frame = requestAnimationFrame(tick);
-      };
-
-      audio.addEventListener("ended", () => {
-        if (!cancelled) finish();
-      });
-      frame = requestAnimationFrame(tick);
+      }, msPerChar);
     };
+
+    // Begin steady typing fallback right away
+    startTypewriter();
 
     const run = async () => {
       try {
@@ -134,57 +129,83 @@ export function useJarvisSpeech(message: string | null | undefined) {
           rel();
           return;
         }
+
+        stopAllSpeech();
         const audio = new Audio(src);
         audioRef.current = audio;
         setVoice("audio");
+
         await new Promise<void>((resolve, reject) => {
           audio.addEventListener("loadedmetadata", () => resolve(), { once: true });
-          audio.addEventListener("error", () => reject(new Error("audio decode")), {
-            once: true,
-          });
+          audio.addEventListener("error", () => reject(new Error("audio decode")), { once: true });
           setTimeout(() => reject(new Error("audio timeout")), 6000);
         });
+
+        if (cancelled) return;
+
+        // Recalibrate typewriter speed if audio duration is known
+        if (audio.duration && audio.duration > 0) {
+          startTypewriter(audio.duration);
+        }
+
+        audio.addEventListener("ended", () => {
+          if (!cancelled) {
+            audioDone = true;
+            tryFinish();
+          }
+        });
+
         const playPromise = audio.play();
         if (playPromise !== undefined) {
           playPromise.catch(() => {
             if (!cancelled) {
               setVoice("text-only");
+              audioDone = true;
+              tryFinish();
             }
           });
         }
-
-        if (alignment && alignment.character_start_times_seconds.length > 0) {
-          if (timer) {
-            clearInterval(timer);
-            timer = null;
-          }
-          typeWithAlignment(audio, alignment);
-          return;
-        }
-
-        const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
-        type(duration ? (duration * 1000) / message.length : 30);
       } catch {
         if (cancelled) return;
         setVoice("text-only");
+        stopAllSpeech();
+
         if (typeof window !== "undefined" && "speechSynthesis" in window) {
           try {
-            window.speechSynthesis.cancel();
-            window.speechSynthesis.resume();
             const utt = new SpeechSynthesisUtterance(message);
-            utt.rate = 1.05;
+            utt.rate = 1.0;
+
             utt.onboundary = (event) => {
               if (cancelled) return;
               const idx = event.charIndex + (event.charLength || 1);
-              setTyped(message.slice(0, idx));
+              if (idx > typed.length) {
+                setTyped(message.slice(0, idx));
+              }
             };
+
             utt.onend = () => {
-              if (!cancelled) finish();
+              if (!cancelled) {
+                audioDone = true;
+                typingDone = true;
+                finish();
+              }
             };
+
+            utt.onerror = () => {
+              if (!cancelled) {
+                audioDone = true;
+                typingDone = true;
+                finish();
+              }
+            };
+
             window.speechSynthesis.speak(utt);
           } catch {
-            // ignore speech synthesis failures
+            audioDone = true;
+            // Handled by typewriter fallback
           }
+        } else {
+          audioDone = true;
         }
       }
     };
@@ -194,10 +215,9 @@ export function useJarvisSpeech(message: string | null | undefined) {
     return () => {
       cancelled = true;
       controller.abort();
-      if (timer) clearInterval(timer);
-      if (frame) cancelAnimationFrame(frame);
-      audioRef.current?.pause();
-      audioRef.current = null;
+      if (typeInterval) clearInterval(typeInterval);
+      if (frameId) cancelAnimationFrame(frameId);
+      stopAllSpeech();
       release?.();
     };
   }, [message]);

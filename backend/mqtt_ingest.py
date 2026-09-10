@@ -131,18 +131,19 @@ def _on_message(client, userdata, msg):
         # Throttle live_data updates to 2.5s interval
         now_mono = time.monotonic()
         live_res = None
-        if now_mono - _last_live_insert_time >= LIVE_INSERT_INTERVAL_S:
+        hist_res = None
+
+        live_attempted = (now_mono - _last_live_insert_time >= LIVE_INSERT_INTERVAL_S)
+        if live_attempted:
+            _last_live_insert_time = now_mono
             live_res = supabase_client.update_live_data(telemetry)
-            if live_res is not None:
-                _last_live_insert_time = now_mono
 
         # Throttle history_data inserts to avoid DB flooding
         elapsed = now_mono - _last_history_insert_time
-        hist_res = None
-        if elapsed >= HISTORY_INSERT_INTERVAL_S:
+        hist_attempted = (elapsed >= HISTORY_INSERT_INTERVAL_S)
+        if hist_attempted:
+            _last_history_insert_time = now_mono
             hist_res = supabase_client.insert_history_data(telemetry)
-            if hist_res is not None:
-                _last_history_insert_time = now_mono
 
         if hist_res is not None:
             _last_message_timestamp = now_iso
@@ -156,8 +157,15 @@ def _on_message(client, userdata, msg):
         elif live_res is not None:
             _last_message_timestamp = now_iso
             logger.info(f"✅ [MQTT->DB] Updated live_data (id=1) | V: {telemetry['voltage']}V, I: {telemetry['current_a']}A, Spd: {telemetry['speed']} km/h")
+        elif live_attempted or hist_attempted:
+            failed_tables = []
+            if live_attempted and live_res is None:
+                failed_tables.append("live_data")
+            if hist_attempted and hist_res is None:
+                failed_tables.append("history_data")
+            logger.warning(f"⚠️ [MQTT->DB FAILED] Failed DB writes for payload at {now_iso} on tables: {', '.join(failed_tables)}")
         else:
-            logger.warning(f"⚠️ [MQTT->DB FAILED] Failed DB writes for payload at {now_iso}")
+            logger.debug(f"Skipped DB write (throttled) for payload at {now_iso}")
 
     except json.JSONDecodeError as e:
         logger.error(f"Malformed JSON payload on topic '{msg.topic}': {e}")
